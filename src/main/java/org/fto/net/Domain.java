@@ -44,21 +44,18 @@ public class Domain {
 
     // Subdomain of full Domain
     private final String subDomain;
+    
+    // Number of subdomains
+    private final Integer numSubdomains;
 
     // Results of analyses
     private final Map<String, Integer> analysisData;
-
-    // Hosting site if any
-    private final String host;
-
-    // Type of hosting site, if any.
-    private final String hostType;
 
     // Underlying IP address of the domain. This will match the domain if it is already an IP address.
     private final String ipAddress;
 
     // Establishes whether this is production or test. This is used to limit lengthy operations during test.
-    private final boolean collectIPAddress;
+    private final Boolean collectIPAddress;
 
     /**
      * Constructor for Domain; this allows both a URL source and a url to be
@@ -74,7 +71,8 @@ public class Domain {
      * @param collectIPAddress
      * @throws MalformedURLException
      */
-    public Domain(final String source, final String url, final TLDList tldList, final String host, final String hostType, final boolean collectIPAddress) throws MalformedURLException {
+    public Domain(final String source, final String url, final TLDList tldList, final Boolean collectIPAddress)
+    		throws MalformedURLException {
         this.collectIPAddress = collectIPAddress;
 
         // Source or list from whence the URL came
@@ -90,11 +88,7 @@ public class Domain {
         this.domainIsIP = IPRegex.isIPv4(this.domain);
 
         // Pull out TLD (Top-Level Domain) for easier analysis later. Do not do this for IPs.
-        if (!domainIsIP) {
-            this.TLD = tldList.getTLDFromDomain(domain);
-        } else {
-            this.TLD = "";
-        }
+        this.TLD = domainIsIP ? "" : tldList.getTLDFromDomain(domain);
 
         // Check if domain is a TLD (or effective TLD)
         this.domainIsTLD = isDomainTLD();
@@ -105,40 +99,14 @@ public class Domain {
         // Pull out sub-domain for easier analysis later
         this.subDomain = getSubDomainFromDomain();
 
+        // Calculate number of subdomains
+        this.numSubdomains = this.getNumSubdomainsFromDomain();
+
         // Initialize analysis data; data will be added later
         this.analysisData = new LinkedHashMap<String, Integer>();
 
-        this.host = host;
-        this.hostType = hostType;
-
-        this.ipAddress = getIPAddressFromDomain();
-    }
-
-    /**
-     * Returns the IP address that is associated with the specific domain. In
-     * the case that the domain is an IP, we skip this function and just set the
-     * IP to the domain.
-     *
-     * If the IP failed to be gathered, the returned string will by empty.
-     *
-     * @return
-     */
-    private String getIPAddressFromDomain() {
-        String hostIP = "";
-
-        // Only collect IPS if this is a production run. The process is too lengthy for test runs.
-        if (collectIPAddress) {
-            if (domainIsIP) {
-                hostIP = domain;
-            } else {
-                try {
-                    hostIP = java.net.InetAddress.getByName(getURLHost()).getHostAddress();
-                } catch (UnknownHostException ex) {
-                    log.warn("Could not get an IP address for: " + domain);
-                }
-            }
-        }
-        return hostIP;
+        // Query website for IP; do not query site if IP is provided and just use domain field
+        this.ipAddress = domainIsIP ? this.domain : getIPAddressFromDomain();
     }
 
     /**
@@ -154,7 +122,7 @@ public class Domain {
      * @throws MalformedURLException
      */
     public Domain(final String source, final String url, final TLDList tldList) throws MalformedURLException {
-        this(source, url, tldList, "", "", true);
+        this(source, url, tldList, true);
     }
 
     /**
@@ -171,6 +139,34 @@ public class Domain {
     }
 
     /**
+     * Returns the IP address that is associated with the specific domain. In
+     * the case that the domain is an IP, we skip this function and just set the
+     * IP to the domain.
+     *
+     * If the IP failed to be gathered, the returned string will by empty.
+     *
+     * @return The IP of the host/domain
+     */
+    private final String getIPAddressFromDomain() {
+        String hostIP = "";
+
+        if(this.collectIPAddress) {
+	        try {
+	            hostIP = java.net.InetAddress.getByName(getURLHost()).getHostAddress();
+	            if (hostIP.isEmpty()) {
+	            	throw new UnknownHostException("Host IP is empty");
+	            }
+	        } catch (UnknownHostException uhe) {
+	            log.warn("Could not get an IP address for: " + domain, uhe);
+	        }
+        } else {
+        	hostIP = "NOT COLLECTED";
+        }
+
+        return hostIP;
+    }
+
+    /**
      * Sets the url private class variable
      *
      * @author Ken Kauffman
@@ -178,7 +174,7 @@ public class Domain {
      * @return URL object made from input
      * @throws MalformedURLException
      */
-    final private URL setURL(final String str) throws MalformedURLException {
+    private final URL setURL(final String str) throws MalformedURLException {
         final URL result;
 
         // A URL object must contain a protocol or it throws a MalformedURLException
@@ -266,7 +262,7 @@ public class Domain {
 
         // String result will be empty if this object stores an IP or effective TLD
         if (!domainIsIP && !domainIsTLD) {
-            int lengthWithoutTLD = domain.length() - (TLD.length() + 1);
+            Integer lengthWithoutTLD = domain.length() - (TLD.length() + 1);
             String domainWithoutTLD = "";
             if (domain.length() > lengthWithoutTLD) {
                 domainWithoutTLD = domain.substring(0, lengthWithoutTLD);
@@ -302,7 +298,7 @@ public class Domain {
         if (!domainIsIP && !domainIsTLD && !domain.startsWith(MLD)) {
             // Subdomain is everything before MLD
             if (!domain.startsWith(MLD)) {
-                int MLDIndex = domain.indexOf("." + MLD);
+                Integer MLDIndex = domain.indexOf("." + MLD);
                 result = domain.substring(0, MLDIndex);
             }
         } else {
@@ -310,6 +306,27 @@ public class Domain {
         }
 
         return result;
+    }
+
+    /**
+     * Get number of sub domains.
+     *
+     * @return
+     */
+    public final Integer getNumSubdomainsFromDomain() {
+        final Integer result;
+
+    	if (subDomain.isEmpty()) {
+            result = 0;
+        } else if (subDomain.contains(".")) {
+        	// Count the number of periods that exist and add 1; this is the number of subdomains.
+            result = StringUtils.countMatches(subDomain, ".") + 1;
+        } else {
+            // Since the subdomain is not empty but doesn't contain a period, we know that there is only 1 subdomain.
+            result = 1;
+        }
+
+    	return result;
     }
 
     /**
@@ -449,6 +466,16 @@ public class Domain {
     }
 
     /**
+     * Returns the number of subdomains derived from the domain
+     *
+     * @author Ken Kauffman
+     * @return Number of subdomains from private class variable
+     */
+    public final Integer getNumSubdomains() {
+    	return this.numSubdomains;
+    }
+
+    /**
      * Returns the MLD derived from the domain
      *
      * @author Ken Kauffman
@@ -466,59 +493,6 @@ public class Domain {
      */
     final public String getTLD() {
         return this.TLD;
-    }
-
-    /**
-     * Returns whether the host is a whitelisted or blacklisted host domain
-     *
-     * @author Travis Williams
-     * @return Host type from private class variable
-     */
-    public String getHostType() {
-        return hostType;
-    }
-
-    /**
-     * Returns the whitelisted or blacklisted host domain
-     *
-     * @author Travis Williams
-     * @return Host from private class variable
-     */
-    public String getHost() {
-        return host;
-    }
-
-    /**
-     * If the subDomain is empty, returns the MLD. If the subDomain is not
-     * empty, returns 'subDomain.MLD'
-     *
-     * @return
-     */
-    public String getDomainWithoutTLD() {
-        if (subDomain.isEmpty()) {
-            return getMLD();
-        } else {
-            return getSubdomain() + "." + getMLD();
-        }
-    }
-
-    /**
-     * Returns the smallest domain that we want to block without blocking a
-     * blacklisted or whitelisted host domain
-     *
-     * @author Travis Williams
-     * @return Host from private class variable
-     */
-    public String getBlockableDomain() {
-        // In the basic case, we want to block the MLD.TLD combo.
-        String blockableDomain = MLD + "." + TLD;
-
-        // If this domain is a host, we want to instead block the next level upwards i.e. (last section of subDomain).MLD.TLD
-        if (!host.isEmpty() && blockableDomain.equalsIgnoreCase(host) && !subDomain.isEmpty()) {
-            blockableDomain = subDomain.substring(subDomain.lastIndexOf(".") + 1) + "." + blockableDomain;
-        }
-
-        return blockableDomain;
     }
 
     /**
@@ -544,9 +518,69 @@ public class Domain {
     }
 
     /**
-     * Generic hashcode generated using the domain string.
+     * Returns the IP address (or empty if it couldn't be found) of the domain.
      *
-     * @return
+     * @author Ken Kauffman
+     * @return The IP address of the domain; if collection was disabled, the returned value will be "NOT COLLECTED"
+     */
+    public String getIpAddress() {
+        return ipAddress;
+    }
+
+    /**
+     * Allows the user to request the subdomain from a specific position.
+     *
+     * We assume that, when calling this function with a '1', the user is asking
+     * for the 'first' sub domain. To that end, the functionality is modified to
+     * fit that logic.
+     *
+     * @author Ken Kauffman
+     * @param position The position (starting at 1) of the desired subdomain
+     * @return The desired subdomain
+     */
+    public final String getNthSubDomain(final Integer position) {
+        final String nthSubdomain;
+
+        // Check to see if we are asking for a sub domain that even exists.
+        if (getNumSubdomainsFromDomain() >= position) {
+            String[] splitSubDomains = subDomain.split("\\.");
+
+            /**
+             * This handles re-mapping the array to start at '1' rather than '0'
+             * for the first element. This also handles inverting the indexes to
+             * read more logically for this scenario rather than how arrays
+             * usually work.
+             */
+            final Integer logicalPosition = splitSubDomains.length - position;
+
+            // Ensures we are still bounded by the array indexes.
+            if (logicalPosition >= 0 && logicalPosition < splitSubDomains.length) {
+                nthSubdomain = splitSubDomains[logicalPosition];
+            } else {
+            	nthSubdomain = "";
+            }
+        } else {
+        	nthSubdomain = "";
+        }
+
+        return nthSubdomain;
+    }
+
+    /**
+     * Returns the full map of analysis data.
+     *
+     * @author Ken Kauffman
+     * @return The analysis data from the private class variable.
+     */
+    public synchronized final Map<String, Integer> getAnalysisData() {
+        return analysisData;
+    }
+
+    /**
+     * Generates generic hash code using the domain string.
+     *
+     * @author Ken Kauffman
+     * @return Hash code of domain String
      */
     @Override
     public int hashCode() {
@@ -556,9 +590,11 @@ public class Domain {
     }
 
     /**
-     * Generic equals generated using the domain string.
+     * Checks if this Domain Object is equal to another Object
      *
-     * @return
+     * @author Ken Kauffman
+     * @param The other Object for comparison
+     * @return Boolean value indicating whether supplied Object equals this one
      */
     @Override
     public boolean equals(Object obj) {
@@ -577,80 +613,15 @@ public class Domain {
         }
         return true;
     }
-
+    
     /**
-     * Returns the IP address (or empty if it couldn't be found) of the domain.
-     *
-     * @return
+     * Overrides the toString() method; equivalent to calling getDomain()
+     * 
+     * @author Ken Kauffman
+     * @return The domain String private class variablee
      */
-    public String getIpAddress() {
-        return ipAddress;
-    }
-
-    /**
-     * Allows the user to request the sub domain from a specific position.
-     *
-     * We assume that, when calling this function with a '1', the user is asking
-     * for the 'first' sub domain. To that end, the functionality is modified to
-     * fit that logic.
-     *
-     * @return
-     */
-    public String getNthSubDomain(int position) {
-        String nthSubdomain = "";
-        /**
-         * Check to see if we are asking for a sub domain that even exists.
-         */
-        if (getNumSubDomains() >= position) {
-            String[] splitSubDomains = subDomain.split("\\.");
-
-            /**
-             * This handles re-mapping the array to start at '1' rather than '0'
-             * for the first element. This also handles inverting the indexes to
-             * read more logically for this scenario rather than how arrays
-             * usually work.
-             */
-            int logicalPosition = splitSubDomains.length - position;
-
-            /**
-             * Ensures we are still bounded by the array indexes.
-             */
-            if (logicalPosition >= 0 && logicalPosition < splitSubDomains.length) {
-                nthSubdomain = splitSubDomains[logicalPosition];
-            }
-        }
-        return nthSubdomain;
-    }
-
-    /**
-     * Get number of sub domains.
-     *
-     * @return
-     */
-    public int getNumSubDomains() {
-        if (subDomain.isEmpty()) {
-            return 0;
-        } else if (subDomain.contains(".")) {
-            /**
-             * Count the number of periods that exist and add 1. This is the
-             * number of sub domains.
-             */
-            return StringUtils.countMatches(subDomain, ".") + 1;
-        } else {
-            /**
-             * Since the sub domain is not empty but doesn't contain a period,
-             * we know that there is only 1 sub domain.
-             */
-            return 1;
-        }
-    }
-
-    /**
-     * Return full map of analysis data.
-     *
-     * @return
-     */
-    public synchronized Map<String, Integer> getAnalysisData() {
-        return analysisData;
+    @Override
+    public String toString() {
+    	return this.domain;
     }
 }
